@@ -62,7 +62,7 @@ jobs:
           allowed-endpoints: >
             api.github.com:443
             github.com:443
-            release-assets.githubusercontent.com
+            release-assets.githubusercontent.com:443
       - name: Check out code into the Go module directory
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
