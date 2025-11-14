@@ -1,1 +1,3 @@
-.testenv
+.env
+data/*
+!data/.gitkeep
