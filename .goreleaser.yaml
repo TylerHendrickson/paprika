@@ -39,6 +39,9 @@ archives:
       - goos: windows
         formats: [zip]
 
+universal_binaries:
+  - replace: true
+
 dockers_v2:
   - images:
       - "{{ tolower .Env.DOCKER_IMAGE }}"
