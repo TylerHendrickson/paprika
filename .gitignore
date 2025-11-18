@@ -2,3 +2,5 @@
 data/*
 !data/.gitkeep
 coverage.out
+# Added by goreleaser init:
+dist/
