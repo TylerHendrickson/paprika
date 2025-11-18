@@ -3,21 +3,15 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/signal"
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		panic(err)
-	}
-
 	// Register context to allow graceful shutdown on SIGINT.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	// If signaled, unregister to restore default behavior and allow any
@@ -55,12 +49,6 @@ func Main(ctx context.Context, stdout, stderr *os.File, args []string, exit func
 		},
 		kong.Exit(exit),
 	)
-
-	if cli.VersionFull {
-		// Print detailed version and exit
-		fmt.Fprintln(kctx.Stdout, versionStringFull())
-		kctx.Exit(0)
-	}
 
 	if err := kctx.Run(); err != nil {
 		var re reportedErr

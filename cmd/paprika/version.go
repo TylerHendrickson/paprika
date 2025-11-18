@@ -1,9 +1,21 @@
 package main
 
 import (
+	"fmt"
 	"runtime/debug"
 	"strings"
+
+	"github.com/alecthomas/kong"
 )
+
+type VersionFullFlag bool
+
+// BeforeReset writes the full version string and terminates with a 0 exit status.
+func (v VersionFullFlag) BeforeReset(app *kong.Kong, vars kong.Vars) error {
+	fmt.Fprintln(app.Stdout, versionStringFull())
+	app.Exit(0)
+	return nil
+}
 
 var readBuildInfo = debug.ReadBuildInfo
 

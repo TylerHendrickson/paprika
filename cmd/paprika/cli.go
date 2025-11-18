@@ -20,8 +20,8 @@ type reportedErr struct {
 
 // CLI is the command-line application root.
 type CLI struct {
-	Version     kong.VersionFlag `help:"Print version information and exit."`
-	VersionFull bool             `help:"Print detailed version information and exit."`
+	Version     kong.VersionFlag `help:"Print version information and exit." short:"v"`
+	VersionFull VersionFullFlag  `help:"Print detailed version information and exit."`
 
 	DataDir string `help:"Path for the directory used to store Paprika data." env:"PAPRIKA_DATA_DIR" type:"existingdir" default:"data"`
 

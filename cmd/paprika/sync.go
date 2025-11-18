@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/TylerHendrickson/paprika"
 	"github.com/rs/zerolog"
@@ -23,76 +24,120 @@ func (i NumWorkers) Validate() error {
 
 // Sync is the sub-command for backing up Paprika data.
 type SyncCMD struct {
-	IncludeCategories bool       `help:"Whether to (not) include categories." negatable:"" default:"true" env:"PAPRIKA_SYNC_CATEGORIES"`
 	IncludeRecipes    bool       `help:"Whether to (not) include recipes." negatable:"" default:"true" env:"PAPRIKA_SYNC_RECIPES"`
+	IncludeCategories bool       `help:"Whether to (not) include categories." negatable:"" default:"true" env:"PAPRIKA_SYNC_CATEGORIES"`
 	NumWorkers        NumWorkers `help:"Number of workers to download recipes in parallel." default:"10" env:"PAPRIKA_SYNC_WORKERS"`
 }
 
 func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log zerolog.Logger) error {
+	var exitWithErrors atomic.Bool
 	wg := sync.WaitGroup{}
+
 	if cmd.IncludeCategories {
-		wg.Go(func() { cmd.SaveCategoriesIndex(ctx, cli, pc, log) })
-	}
-
-	if !cmd.IncludeRecipes {
-		wg.Wait()
-		return nil
-	}
-
-	recipeIndexItems, err := cmd.SaveRecipesIndex(ctx, cli, pc, log)
-	if err != nil {
-		log.Err(err).Msg("cannot sync recipes due to error")
-		wg.Wait()
-		return reportedErr{err}
-	}
-	recipesQueue := make(chan paprika.RecipeItem, cmd.NumWorkers)
-	for i := range cmd.NumWorkers {
 		wg.Go(func() {
-			log := log.With().Int("worker-id", int(i)+1).Int("total-workers", int(cmd.NumWorkers)).Logger()
-			for {
-				select {
-				case <-ctx.Done():
-					log.Warn().Err(ctx.Err()).Msg("shutdown requested while waiting for work")
-					return
-
-				case ref, ok := <-recipesQueue:
-					if !ok {
-						log.Debug().Msg("worker shutting down because the queue is closed and empty")
-						return
-					}
-					itemLogger := log.With().Str("recipe-uid", ref.UID).Str("recipe-indexed-hash", ref.Hash).Logger()
-					itemLogger.Debug().Msg("starting work for recipe item")
-					if err := cmd.UpsertRecipe(ctx, cli, pc, ref, itemLogger); err != nil {
-						itemLogger.Err(err).Msg("worker task failed for recipe item in queue")
-					}
-					itemLogger.Debug().Msg("completed work for recipe item")
-				}
+			if cmd.SaveCategoriesIndex(ctx, cli, pc, log) != nil {
+				exitWithErrors.Store(true)
 			}
 		})
 	}
 
-	for _, item := range recipeIndexItems {
-		log.Trace().Str("recipe-uid", item.UID).Str("recipe-indexed-hash", item.Hash).Msg("adding recipe item to work queue")
-		recipesQueue <- item
+	var savedRecipesCount atomic.Int64
+	if cmd.IncludeRecipes {
+		recipesQueue := make(chan paprika.RecipeItem, cmd.NumWorkers)
+		wg.Go(func() {
+			defer close(recipesQueue)
+
+			recipeIndexItems, err := cmd.SaveRecipesIndex(ctx, cli, pc, log)
+			if err != nil {
+				exitWithErrors.Store(true)
+			}
+			var itemsQueued int
+			for _, item := range recipeIndexItems {
+				recipesQueue <- item
+				itemsQueued++
+			}
+			log.Debug().Int("total-items", itemsQueued).
+				Msg("added all indexed recipe items to sync queue")
+		})
+
+		for i := range cmd.NumWorkers {
+			wg.Go(func() {
+				log := log.With().Int("worker-id", int(i)+1).Logger()
+				var workerSavedRecipesCount int64
+				defer func() {
+					if workerSavedRecipesCount > 0 {
+						log.Debug().
+							Int64("saved-recipes-count", workerSavedRecipesCount).
+							Msg("worker saved recipes in queue")
+						savedRecipesCount.Add(workerSavedRecipesCount)
+					} else {
+						log.Debug().Msg("worker stopped before saving any recipes")
+					}
+				}()
+
+				for {
+					// Prioritize context cancellation
+					select {
+					case <-ctx.Done():
+						log.Warn().Err(ctx.Err()).
+							Str("reason", "shutdown requested").
+							Msg("shutting down worker")
+						return
+					default:
+					}
+
+					select {
+					case <-ctx.Done():
+						log.Warn().Err(ctx.Err()).
+							Str("reason", "shutdown requested").
+							Msg("shutting down worker")
+						return
+					case ref, ok := <-recipesQueue:
+						if !ok {
+							log.Debug().Str("reason", "no more work").
+								Msg("shutting down worker")
+							return
+						}
+						log := log.With().
+							Str("recipe-uid", ref.UID).
+							Str("recipe-indexed-hash", ref.Hash).Logger()
+						updated, err := cmd.UpsertRecipe(ctx, cli, pc, ref, log)
+						if err != nil {
+							exitWithErrors.Store(true)
+							log.Err(err).Msg("worker task failed for recipe item in queue")
+						}
+						if updated {
+							workerSavedRecipesCount++
+						}
+					}
+				}
+			})
+		}
 	}
-	close(recipesQueue)
-	log.Debug().Msg("all recipe jobs queued; waiting to complete")
+
 	wg.Wait()
-	log.Info().Msg("finished processing recipes")
+	if cmd.IncludeRecipes {
+		log.Info().Int64("total-saved", savedRecipesCount.Load()).
+			Msg("saved new/updated recipes")
+	}
+	if exitWithErrors.Load() {
+		return fmt.Errorf("sync completed with errors")
+	}
+	log.Info().Msg("sync completed successfully")
 	return nil
 }
 
 func (cmd *SyncCMD) SaveCategoriesIndex(ctx context.Context, cli *CLI, c *paprika.Client, log zerolog.Logger) error {
 	categories, err := c.Categories(ctx)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to get categories")
+		log.Fatal().Err(err).Msg("failed to get categories from Paprika API")
 		return err
 	}
 
 	path := filepath.Join(cli.DataDir, "categories-index.json")
-	log = log.With().Str("path", path).Logger()
+	log = log.With().Str("categories-index-file", path).Logger()
 	if err := saveAsJSON(categories, path); err != nil {
-		log.Err(err).Msg("save to create Paprika categories index file")
+		log.Err(err).Msg("error saving Paprika categories index file")
 		return err
 	}
 	log.Info().Msg("saved Paprika categories index file")
@@ -117,14 +162,14 @@ func (cmd *SyncCMD) SaveRecipesIndex(ctx context.Context, cli *CLI, c *paprika.C
 	return recipesIndex, err
 }
 
-func (cmd *SyncCMD) UpsertRecipe(ctx context.Context, cli *CLI, c *paprika.Client, ref paprika.RecipeItem, log zerolog.Logger) error {
+func (cmd *SyncCMD) UpsertRecipe(ctx context.Context, cli *CLI, c *paprika.Client, ref paprika.RecipeItem, log zerolog.Logger) (bool, error) {
 	path := filepath.Join(cli.DataDir, "recipes", ref.UID[:2], ref.UID[:3], ref.UID, "recipe.json")
 	log = log.With().Str("recipe-file", path).Logger()
 
 	recipeFileAction := "create"
 	if doUpdate, exists := shouldSaveRecipe(path, ref.Hash, log); !doUpdate {
 		log.Debug().Msg("not saving recipe")
-		return nil
+		return false, nil
 	} else if exists {
 		recipeFileAction = "update"
 	}
@@ -134,25 +179,28 @@ func (cmd *SyncCMD) UpsertRecipe(ctx context.Context, cli *CLI, c *paprika.Clien
 	recipe, err := c.Recipe(ctx, ref.UID)
 	if err != nil {
 		log.Err(err).Msg("failed to retrieve recipe from API")
+		return false, err
 	}
+
 	if recipe.Hash != ref.Hash {
 		// recipe may have been updated since retrieving the reference hash,
 		// or the fetched recipe is stale if it matches the has on disk
 		log = log.With().Str("recipe-fetched-hash", recipe.Hash).Logger()
 		log.Warn().Msg("fetched recipe hash does not match reference hatch")
-	} else if recipe.UID != ref.UID {
+	}
+	if recipe.UID != ref.UID {
 		// this would be a major API issue
-		log = log.With().Str("recipe-fetched-uid", recipe.Hash).Logger()
-		err := fmt.Errorf("fetched recipe UID %q does not match reference UID %q", recipe.UID, ref.UID)
-		log.Err(err).Msg("rejecting updated recipe because the fetched UID does not match the requested UID")
+		err := fmt.Errorf("fetched recipe UID %q does not match requested UID %q", recipe.UID, ref.UID)
+		log.Err(err).Str("recipe-fetched-uid", recipe.Hash).Msg("rejecting fetched recipe")
+		return false, err
 	}
 
 	if err := saveAsJSON(recipe, path); err != nil {
 		log.Err(err).Msg("failed to save recipe file")
-		return err
+		return false, err
 	}
 	log.Info().Msg("saved recipe file")
-	return nil
+	return true, nil
 }
 
 func shouldSaveRecipe(path, hash string, log zerolog.Logger) (update bool, exists bool) {
@@ -172,7 +220,8 @@ func shouldSaveRecipe(path, hash string, log zerolog.Logger) (update bool, exist
 		return false, true
 	}
 
-	log.Debug().Str("recipe-extant-hash", extantItem.Hash).Msg("extant recipe file does not match latest recipe hash")
+	log.Debug().Str("recipe-extant-hash", extantItem.Hash).
+		Msg("extant recipe file does not match latest recipe hash")
 	return true, true
 }
 
