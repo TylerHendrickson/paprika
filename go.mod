@@ -7,7 +7,6 @@ require github.com/stretchr/testify v1.11.1
 require (
 	github.com/alecthomas/kong v1.12.1
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20
 	github.com/pmezard/go-difflib v1.0.0 // indirect
