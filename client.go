@@ -154,7 +154,7 @@ func (c *Client) DoRequest(req *http.Request, value any) error {
 	return nil
 }
 
-func UnwrapResult(jsonData []byte, value interface{}) error {
+func UnwrapResult(jsonData []byte, value any) error {
 	var wrapper Result
 
 	err := json.Unmarshal(jsonData, &wrapper)

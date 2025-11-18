@@ -29,10 +29,10 @@ type CLI struct {
 	PaprikaPassword string   `help:"Password for Paprika API auth." env:"PAPRIKA_PASSWORD"`
 	PaprikaBaseURL  *url.URL `help:"Base URL for the Paprika API." env:"PAPRIKA_BASE_URL" hidden:""`
 
-	Sync SyncCMD `cmd:"" name:"sync" help:"Sync (backup) data from the Paprika API to the local file system."`
+	Sync SyncCMD `cmd:"" name:"sync" help:"Sync (back up) data from the Paprika API to the local file system."`
 
 	LoggingOpts struct {
-		Level  zerolog.Level `help:"Minimum log level. [default: ${default}] " enum:"${logLevelEnum}" default:"warn" env:"LOG_LEVEL"`
+		Level  zerolog.Level `help:"Minimum log level. [default: ${default}] " enum:"${logLevelEnum}" default:"INFO" env:"LOG_LEVEL"`
 		Format struct {
 			Pretty bool `help:"Force pretty log output. [default: (enabled if stderr is a TTY.)] " xor:"logfmt" env:"LOG_PRETTY"`
 			JSON   bool `help:"Force JSON log output. [default: (enabled if stderr is not a TTY.)]" xor:"logfmt" env:"LOG_JSON"`
