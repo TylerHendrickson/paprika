@@ -35,18 +35,15 @@ jobs:
         with:
           show-progress: false
           persist-credentials: false
-
       - name: Set up Go
         uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version-file: go.mod
-
       - name: Test with Reporting (Linux only)
         if: matrix.platform == 'ubuntu-latest'
         run: |
           go test -race -covermode=atomic -coverprofile=cover.out ./...
           go test -race -covermode=atomic -coverprofile=cover.out -json ./... > report.json
-
       - name: Test without Reporting (non-Linux only)
         if: matrix.platform != 'ubuntu-latest'
         run: go test -race ./...
