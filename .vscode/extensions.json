@@ -1,0 +1,9 @@
+{
+    "recommendations": [
+        "github.vscode-github-actions",
+        "golang.go",
+        "mikestead.dotenv",
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml",
+    ]
+}
