@@ -55,6 +55,7 @@ dockers_v2:
 
 changelog:
   sort: asc
+  use: github
   filters:
     exclude:
       - "^docs:"
