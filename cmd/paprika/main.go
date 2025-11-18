@@ -29,7 +29,7 @@ func Main(ctx context.Context, stdout, stderr *os.File, args []string, exit func
 	cli.stderr = stderr
 	kctx := Parse(
 		&cli, args,
-		kong.Description("Restructures CSV into JSON."),
+		kong.Description("Unofficial command-line utility for the Paprika recipe manager 🌶️"),
 		kong.ShortUsageOnError(),
 		kong.BindTo(ctx, (*context.Context)(nil)),
 		kong.Vars{
