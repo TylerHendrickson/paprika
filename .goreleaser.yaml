@@ -52,6 +52,10 @@ dockers_v2:
       "org.opencontainers.image.revision": "{{ .FullCommit }}"
       "org.opencontainers.image.version": "{{ .Version }}"
       "org.opencontainers.image.source": "{{ .GitURL }}"
+    tags:
+      - "{{ .Version }}"
+      - "{{ if .IsNightly }}nightly{{ end }}"
+      - "{{ if not .IsNightly }}latest{{ end }}"
 
 changelog:
   sort: asc
