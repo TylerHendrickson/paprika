@@ -52,12 +52,23 @@ func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log z
 
 			recipeIndexItems, err := cmd.SaveRecipesIndex(ctx, cli, pc, log)
 			if err != nil {
+				log.Err(err).Msg("failed to update Paprika recipes index")
 				exitWithErrors.Store(true)
+				return
 			}
 			var itemsQueued int
 			for _, item := range recipeIndexItems {
-				recipesQueue <- item
-				itemsQueued++
+				select {
+				case <-ctx.Done():
+					log.Warn().Err(ctx.Err()).
+						Int("items-queued", itemsQueued).
+						Int("total-items", len(recipeIndexItems)).
+						Str("reason", "shutdown requested").
+						Msg("stopping before all indexed recipe items can be queued")
+					return
+				case recipesQueue <- item:
+					itemsQueued++
+				}
 			}
 			log.Debug().Int("total-items", itemsQueued).
 				Msg("added all indexed recipe items to sync queue")
@@ -79,16 +90,6 @@ func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log z
 				}()
 
 				for {
-					// Prioritize context cancellation
-					select {
-					case <-ctx.Done():
-						log.Warn().Err(ctx.Err()).
-							Str("reason", "shutdown requested").
-							Msg("shutting down worker")
-						return
-					default:
-					}
-
 					select {
 					case <-ctx.Done():
 						log.Warn().Err(ctx.Err()).
@@ -169,12 +170,17 @@ func (cmd *SyncCMD) SaveRecipesIndex(ctx context.Context, cli *CLI, c *paprika.C
 		log.Err(err).Msg("failed to fetch Paprika recipes index")
 		return recipesIndex, err
 	}
+	log.Debug().Int("indexed-recipes-count", len(recipesIndex)).
+		Msg("fetched Paprika recipes index")
 
+	if err := ctx.Err(); err != nil {
+		return recipesIndex, err
+	}
 	path := pathToRecipesIndexFile(cli.DataDir)
 	log = log.With().Str("path", path).Logger()
 	err = saveAsJSON(recipesIndex, path)
 	if err != nil {
-		log.Err(err).Msg("save to create Paprika recipes index file")
+		log.Err(err).Msg("failed to create Paprika recipes index file")
 	} else {
 		log.Info().Msg("saved Paprika recipes index file")
 	}
