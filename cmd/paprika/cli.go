@@ -23,7 +23,7 @@ type CLI struct {
 	Version     kong.VersionFlag `help:"Print version information and exit." short:"v"`
 	VersionFull VersionFullFlag  `help:"Print detailed version information and exit."`
 
-	DataDir string `help:"Path for the directory used to store Paprika data." env:"PAPRIKA_DATA_DIR" type:"existingdir" default:"data"`
+	DataDir string `help:"Path for the directory used to store Paprika data." env:"PAPRIKA_DATA_ROOT" type:"existingdir" default:"data"`
 
 	PaprikaUsername string   `help:"Username for Paprika API auth." env:"PAPRIKA_USER"`
 	PaprikaPassword string   `help:"Password for Paprika API auth." env:"PAPRIKA_PASSWORD"`
