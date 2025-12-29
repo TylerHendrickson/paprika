@@ -1,6 +1,9 @@
 package main
 
-import "path/filepath"
+import (
+	"os"
+	"path/filepath"
+)
 
 const (
 	filenameRecipeJSON         string = "recipe.json"
@@ -22,13 +25,22 @@ func pathToRecipeDeleteMarkerFile(basePath, uid string) string {
 }
 
 func pathToRecipesDir(basePath string) string {
+	if path, isSet := os.LookupEnv("PAPRIKA_RECIPES_ROOT"); isSet {
+		return path
+	}
 	return filepath.Join(basePath, "recipes")
 }
 
 func pathToRecipesIndexFile(basePath string) string {
+	if path, isSet := os.LookupEnv("PAPRIKA_RECIPES_INDEX"); isSet {
+		return path
+	}
 	return filepath.Join(basePath, filenameRecipesIndex)
 }
 
 func pathToCategoriesIndexFile(basePath string) string {
+	if path, isSet := os.LookupEnv("PAPRIKA_CATEGORIES_INDEX"); isSet {
+		return path
+	}
 	return filepath.Join(basePath, filenameCategoriesIndex)
 }
