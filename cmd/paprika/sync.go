@@ -304,8 +304,26 @@ func saveAsJSON(val any, path string) error {
 	return nil
 }
 
-func (cmd *SyncCMD) PurgeUnreferencedRecipes(ctx context.Context, dataDir string, now time.Time, log zerolog.Logger) error {
-	cutoff := now.Add(-cmd.PurgeAfter)
+// purgeUnreferencedRecipes loads the recipes index and removes on-disk data for recipes not present in the index
+// (indicating that the recipe has been deleted from Paprika) according to a configured grace period.
+// This ensures safe, delayed cleanup of deleted recipes while preventing accidental data loss from temporary index
+// inconsistencies and allowing for manual recovery of recipe data that was mistakenly deleted from Paprika.
+//
+// For recipes that are present in the index, any existing deletion marker file is considered stale and is removed.
+//
+// For recipes that are not present in the index, the function uses a timestamp-based deletion marker
+// to allow for delayed purging according to the following rules:
+//
+//   - If purgeAfter <= 0, unindexed recipes are deleted immediately without using a marker.
+//   - If a deletion marker exists, its timestamp indicates when the recipe was first observed as unindexed.
+//     The recipe data is deleted if this timestamp is older than now minus purgeAfter.
+//   - If no deletion marker exists, one is created with the current timestamp,
+//     which preserves the recipe data until a subsequent run.
+//
+// The function respects context cancellation and aborts early if the context is canceled.
+// If any filesystem or decoding error is encountered, further cleanup is aborted and the error is returned.
+func purgeUnreferencedRecipes(ctx context.Context, dataDir string, now time.Time, purgeAfter time.Duration, log zerolog.Logger) error {
+	cutoff := now.Add(-purgeAfter)
 	log = log.With().
 		Time("purge-cutoff", cutoff).
 		Time("check-timestamp", now).
@@ -370,7 +388,7 @@ func (cmd *SyncCMD) PurgeUnreferencedRecipes(ctx context.Context, dataDir string
 		// - If no timestamp marker exists, create one.
 		// - If a timestamp marker already exists but has not expired, do nothing.
 		doPurge := false
-		if cmd.PurgeAfter == 0 {
+		if purgeAfter <= 0 {
 			// Skip checking for timestamp marker and purge immediately
 			doPurge = true
 			log = log.With().Str("purge-reason", "immediate purge requested").Logger()
