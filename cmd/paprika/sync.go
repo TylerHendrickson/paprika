@@ -66,6 +66,7 @@ func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log z
 	wg := sync.WaitGroup{}
 
 	if cmd.IncludeCategories {
+		log.Debug().Msg("downloading categories index from Paprika")
 		wg.Go(func() {
 			if cmd.SaveCategoriesIndex(ctx, cli, pc, log) != nil {
 				exitWithErrors.Store(true)
@@ -76,6 +77,7 @@ func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log z
 	var savedRecipesCount atomic.Int64
 	if cmd.IncludeRecipes {
 		recipesQueue := make(chan paprika.RecipeItem, cmd.DownloadConcurrency)
+		log.Debug().Msg("downloading recipes index from Paprika")
 		wg.Go(func() {
 			defer close(recipesQueue)
 
@@ -103,6 +105,8 @@ func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log z
 				Msg("added all indexed recipe items to sync queue")
 		})
 
+		log.Debug().Int("max-workers", int(cmd.DownloadConcurrency)).
+			Msg("checking for new/updated recipes from Paprika")
 		for i := range cmd.DownloadConcurrency {
 			wg.Go(func() {
 				log := log.With().Int("worker-id", int(i)+1).Logger()
@@ -154,16 +158,18 @@ func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log z
 			Msg("saved new/updated recipes")
 	}
 
-	if !exitWithErrors.Load() && cmd.PurgeAfter >= 0 {
-		if err := cmd.PurgeUnreferencedRecipes(ctx, cli.DataDir, time.Now(), log); err != nil {
+	if !exitWithErrors.Load() && cmd.PurgeAfter != nil {
+		log.Debug().Str("grace-period", cmd.PurgeAfter.String()).
+			Msg("purging unindexed recipes according to configured grace period")
+		if err := purgeUnreferencedRecipes(ctx, cli.DataDir, time.Now(), time.Duration(*cmd.PurgeAfter), log); err != nil {
 			log.Err(err).Msg("error purging unindexed recipes")
 			exitWithErrors.Store(true)
 		} else {
 			pruneRoot := pathToRecipesDir(cli.DataDir)
+			log := log.With().Str("recipes-data-root", pruneRoot).Logger()
+			log.Debug().Msg("pruning empty directories under recipes data root")
 			if err := PruneFilelessSubtrees(ctx, pruneRoot); err != nil {
-				log.Err(err).
-					Str("recipes-data-root", pruneRoot).
-					Msg("error pruning empty directories under recipes data root")
+				log.Err(err).Msg("error pruning empty directories under recipes data root")
 				exitWithErrors.Store(true)
 			}
 		}
