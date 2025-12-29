@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"fortio.org/duration"
 	"github.com/TylerHendrickson/paprika"
 	"github.com/rs/zerolog"
 )
@@ -24,12 +25,40 @@ func (i NumWorkers) Validate() error {
 	return nil
 }
 
+// PurgeAfter is a time.Duration that represents the grace period for purging unindexed recipe data.
+type PurgeAfter time.Duration
+
+// UnmarshalText parses CLI argument duration input bytes.
+// It supports days (d) and weeks (w) units, in addition to units supported by time.ParseDuration().
+func (d *PurgeAfter) UnmarshalText(b []byte) error {
+	parsed, err := duration.Parse(string(b))
+	if err != nil {
+		return err
+	}
+	if parsed < 0 {
+		return fmt.Errorf("duration cannot be negative")
+	}
+	*d = PurgeAfter(parsed)
+	return nil
+}
+
+func (d *PurgeAfter) String() string {
+	if d == nil {
+		return "<never>"
+	}
+	dur := *d
+	if dur == 0 {
+		return "<immediate>"
+	}
+	return time.Duration(dur).String()
+}
+
 // Sync is the sub-command for backing up Paprika data.
 type SyncCMD struct {
-	IncludeRecipes      bool          `help:"Whether to sync include recipes." negatable:"" default:"true" env:"PAPRIKA_SYNC_RECIPES"`
-	PurgeAfter          time.Duration `help:"Specifies the duration after which recipes not found in Paprika are purged. Negative values disable purge checks." default:"-1s" env:"PAPRIKA_SYNC_PURGE_AFTER" placeholder:"DURATION"`
-	IncludeCategories   bool          `help:"Whether to sync categories." negatable:"" default:"true" env:"PAPRIKA_SYNC_CATEGORIES"`
-	DownloadConcurrency NumWorkers    `help:"Maximum concurrent recipe downloads." default:"10" env:"PAPRIKA_SYNC_WORKERS"`
+	IncludeRecipes      bool        `help:"Whether to sync include recipes." negatable:"" default:"true" env:"PAPRIKA_SYNC_RECIPES"`
+	PurgeAfter          *PurgeAfter `help:"Grace period for retaining local data for a recipe that does not exist present in Paprika (presumably because it was deleted). Set to zero for immediate purge. [(default: data is retained indefinitely.)]" env:"PAPRIKA_SYNC_PURGE_AFTER" placeholder:"DURATION"`
+	IncludeCategories   bool        `help:"Whether to sync categories." negatable:"" default:"true" env:"PAPRIKA_SYNC_CATEGORIES"`
+	DownloadConcurrency NumWorkers  `help:"Maximum concurrent recipe downloads." default:"10" env:"PAPRIKA_SYNC_WORKERS"`
 }
 
 func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log zerolog.Logger) error {
