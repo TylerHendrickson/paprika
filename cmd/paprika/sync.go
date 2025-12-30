@@ -274,6 +274,7 @@ func shouldSaveRecipe(path, hash string, log zerolog.Logger) (update bool, exist
 		log.Debug().Msg("no extant recipe file")
 		return true, false
 	}
+	defer f.Close()
 
 	var extantItem paprika.RecipeItem
 	if err := json.NewDecoder(f).Decode(&extantItem); err != nil {
@@ -298,6 +299,7 @@ func saveAsJSON(val any, path string) error {
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 	if err := json.NewEncoder(f).Encode(val); err != nil {
 		return err
 	}
@@ -334,7 +336,9 @@ func purgeUnreferencedRecipes(ctx context.Context, dataDir string, now time.Time
 	indexFile, err := os.Open(pathToRecipesIndexFile(dataDir))
 	if err != nil {
 		return err
-	} else if err := json.NewDecoder(indexFile).Decode(&index); err != nil {
+	}
+	defer indexFile.Close()
+	if err := json.NewDecoder(indexFile).Decode(&index); err != nil {
 		return err
 	}
 	indexedUIDs := make(map[string]struct{}, len(index))
@@ -447,6 +451,7 @@ func readTimestampMarker(path, layout string) (t time.Time, err error) {
 	if err != nil {
 		return
 	}
+	defer f.Close()
 
 	buf := make([]byte, len(layout))
 	n, err := f.Read(buf)
