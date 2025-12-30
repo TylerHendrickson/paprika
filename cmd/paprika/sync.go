@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"fortio.org/duration"
 	"github.com/TylerHendrickson/paprika"
 	"github.com/rs/zerolog"
 )
@@ -24,12 +25,40 @@ func (i NumWorkers) Validate() error {
 	return nil
 }
 
+// PurgeAfter is a time.Duration that represents the grace period for purging unindexed recipe data.
+type PurgeAfter time.Duration
+
+// UnmarshalText parses CLI argument duration input bytes.
+// It supports days (d) and weeks (w) units, in addition to units supported by time.ParseDuration().
+func (d *PurgeAfter) UnmarshalText(b []byte) error {
+	parsed, err := duration.Parse(string(b))
+	if err != nil {
+		return err
+	}
+	if parsed < 0 {
+		return fmt.Errorf("duration cannot be negative")
+	}
+	*d = PurgeAfter(parsed)
+	return nil
+}
+
+func (d *PurgeAfter) String() string {
+	if d == nil {
+		return "<never>"
+	}
+	dur := *d
+	if dur == 0 {
+		return "<immediate>"
+	}
+	return time.Duration(dur).String()
+}
+
 // Sync is the sub-command for backing up Paprika data.
 type SyncCMD struct {
-	IncludeRecipes      bool          `help:"Whether to sync include recipes." negatable:"" default:"true" env:"PAPRIKA_SYNC_RECIPES"`
-	PurgeAfter          time.Duration `help:"Specifies the duration after which recipes not found in Paprika are purged. Negative values disable purge checks." default:"-1s" env:"PAPRIKA_SYNC_PURGE_AFTER" placeholder:"DURATION"`
-	IncludeCategories   bool          `help:"Whether to sync categories." negatable:"" default:"true" env:"PAPRIKA_SYNC_CATEGORIES"`
-	DownloadConcurrency NumWorkers    `help:"Maximum concurrent recipe downloads." default:"10" env:"PAPRIKA_SYNC_WORKERS"`
+	IncludeRecipes      bool        `help:"Whether to sync include recipes." negatable:"" default:"true" env:"PAPRIKA_SYNC_RECIPES"`
+	PurgeAfter          *PurgeAfter `help:"Grace period for retaining local data for a recipe that does not exist present in Paprika (presumably because it was deleted). Set to zero for immediate purge. [(default: data is retained indefinitely.)]" env:"PAPRIKA_SYNC_PURGE_AFTER" placeholder:"DURATION"`
+	IncludeCategories   bool        `help:"Whether to sync categories." negatable:"" default:"true" env:"PAPRIKA_SYNC_CATEGORIES"`
+	DownloadConcurrency NumWorkers  `help:"Maximum concurrent recipe downloads." default:"10" env:"PAPRIKA_SYNC_WORKERS"`
 }
 
 func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log zerolog.Logger) error {
@@ -37,6 +66,7 @@ func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log z
 	wg := sync.WaitGroup{}
 
 	if cmd.IncludeCategories {
+		log.Debug().Msg("downloading categories index from Paprika")
 		wg.Go(func() {
 			if cmd.SaveCategoriesIndex(ctx, cli, pc, log) != nil {
 				exitWithErrors.Store(true)
@@ -47,6 +77,7 @@ func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log z
 	var savedRecipesCount atomic.Int64
 	if cmd.IncludeRecipes {
 		recipesQueue := make(chan paprika.RecipeItem, cmd.DownloadConcurrency)
+		log.Debug().Msg("downloading recipes index from Paprika")
 		wg.Go(func() {
 			defer close(recipesQueue)
 
@@ -74,6 +105,8 @@ func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log z
 				Msg("added all indexed recipe items to sync queue")
 		})
 
+		log.Debug().Int("max-workers", int(cmd.DownloadConcurrency)).
+			Msg("checking for new/updated recipes from Paprika")
 		for i := range cmd.DownloadConcurrency {
 			wg.Go(func() {
 				log := log.With().Int("worker-id", int(i)+1).Logger()
@@ -125,16 +158,18 @@ func (cmd *SyncCMD) Run(ctx context.Context, cli *CLI, pc *paprika.Client, log z
 			Msg("saved new/updated recipes")
 	}
 
-	if !exitWithErrors.Load() && cmd.PurgeAfter >= 0 {
-		if err := cmd.PurgeUnreferencedRecipes(ctx, cli.DataDir, time.Now(), log); err != nil {
+	if !exitWithErrors.Load() && cmd.PurgeAfter != nil {
+		log.Debug().Str("grace-period", cmd.PurgeAfter.String()).
+			Msg("purging unindexed recipes according to configured grace period")
+		if err := purgeUnreferencedRecipes(ctx, cli.DataDir, time.Now(), time.Duration(*cmd.PurgeAfter), log); err != nil {
 			log.Err(err).Msg("error purging unindexed recipes")
 			exitWithErrors.Store(true)
 		} else {
 			pruneRoot := pathToRecipesDir(cli.DataDir)
+			log := log.With().Str("recipes-data-root", pruneRoot).Logger()
+			log.Debug().Msg("pruning empty directories under recipes data root")
 			if err := PruneFilelessSubtrees(ctx, pruneRoot); err != nil {
-				log.Err(err).
-					Str("recipes-data-root", pruneRoot).
-					Msg("error pruning empty directories under recipes data root")
+				log.Err(err).Msg("error pruning empty directories under recipes data root")
 				exitWithErrors.Store(true)
 			}
 		}
@@ -239,6 +274,7 @@ func shouldSaveRecipe(path, hash string, log zerolog.Logger) (update bool, exist
 		log.Debug().Msg("no extant recipe file")
 		return true, false
 	}
+	defer f.Close()
 
 	var extantItem paprika.RecipeItem
 	if err := json.NewDecoder(f).Decode(&extantItem); err != nil {
@@ -263,14 +299,33 @@ func saveAsJSON(val any, path string) error {
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 	if err := json.NewEncoder(f).Encode(val); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (cmd *SyncCMD) PurgeUnreferencedRecipes(ctx context.Context, dataDir string, now time.Time, log zerolog.Logger) error {
-	cutoff := now.Add(-cmd.PurgeAfter)
+// purgeUnreferencedRecipes loads the recipes index and removes on-disk data for recipes not present in the index
+// (indicating that the recipe has been deleted from Paprika) according to a configured grace period.
+// This ensures safe, delayed cleanup of deleted recipes while preventing accidental data loss from temporary index
+// inconsistencies and allowing for manual recovery of recipe data that was mistakenly deleted from Paprika.
+//
+// For recipes that are present in the index, any existing deletion marker file is considered stale and is removed.
+//
+// For recipes that are not present in the index, the function uses a timestamp-based deletion marker
+// to allow for delayed purging according to the following rules:
+//
+//   - If purgeAfter <= 0, unindexed recipes are deleted immediately without using a marker.
+//   - If a deletion marker exists, its timestamp indicates when the recipe was first observed as unindexed.
+//     The recipe data is deleted if this timestamp is older than now minus purgeAfter.
+//   - If no deletion marker exists, one is created with the current timestamp,
+//     which preserves the recipe data until a subsequent run.
+//
+// The function respects context cancellation and aborts early if the context is canceled.
+// If any filesystem or decoding error is encountered, further cleanup is aborted and the error is returned.
+func purgeUnreferencedRecipes(ctx context.Context, dataDir string, now time.Time, purgeAfter time.Duration, log zerolog.Logger) error {
+	cutoff := now.Add(-purgeAfter)
 	log = log.With().
 		Time("purge-cutoff", cutoff).
 		Time("check-timestamp", now).
@@ -281,7 +336,9 @@ func (cmd *SyncCMD) PurgeUnreferencedRecipes(ctx context.Context, dataDir string
 	indexFile, err := os.Open(pathToRecipesIndexFile(dataDir))
 	if err != nil {
 		return err
-	} else if err := json.NewDecoder(indexFile).Decode(&index); err != nil {
+	}
+	defer indexFile.Close()
+	if err := json.NewDecoder(indexFile).Decode(&index); err != nil {
 		return err
 	}
 	indexedUIDs := make(map[string]struct{}, len(index))
@@ -335,7 +392,7 @@ func (cmd *SyncCMD) PurgeUnreferencedRecipes(ctx context.Context, dataDir string
 		// - If no timestamp marker exists, create one.
 		// - If a timestamp marker already exists but has not expired, do nothing.
 		doPurge := false
-		if cmd.PurgeAfter == 0 {
+		if purgeAfter <= 0 {
 			// Skip checking for timestamp marker and purge immediately
 			doPurge = true
 			log = log.With().Str("purge-reason", "immediate purge requested").Logger()
@@ -394,6 +451,7 @@ func readTimestampMarker(path, layout string) (t time.Time, err error) {
 	if err != nil {
 		return
 	}
+	defer f.Close()
 
 	buf := make([]byte, len(layout))
 	n, err := f.Read(buf)

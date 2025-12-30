@@ -1,3 +1,5 @@
+fortio.org/duration v1.0.4 h1:TB07ng4UsMZPDRujJRkTJIcNqMTLM283zob10nb9K24=
+fortio.org/duration v1.0.4/go.mod h1:RuBVqdcCKRwMmI8WIdVq8kd7ngQPCIe6G7AU0NC0XDw=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=
 github.com/alecthomas/assert/v2 v2.11.0/go.mod h1:Bze95FyfUr7x34QZrjL+XP+0qgp/zg8yS+TtBj1WA3k=
 github.com/alecthomas/kong v1.13.0 h1:5e/7XC3ugvhP1DQBmTS+WuHtCbcv44hsohMgcvVxSrA=

@@ -2,7 +2,10 @@ module github.com/TylerHendrickson/paprika
 
 go 1.25.1
 
-require github.com/stretchr/testify v1.11.1
+require (
+	fortio.org/duration v1.0.4
+	github.com/stretchr/testify v1.11.1
+)
 
 require (
 	github.com/alecthomas/kong v1.13.0
