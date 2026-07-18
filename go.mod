@@ -11,7 +11,7 @@ require (
 	github.com/alecthomas/kong v1.16.0
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.22
+	github.com/mattn/go-isatty v0.0.23
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rs/zerolog v1.35.1
 	golang.org/x/sys v0.29.0 // indirect
