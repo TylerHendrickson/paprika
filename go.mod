@@ -10,7 +10,7 @@ require (
 require go.yaml.in/yaml/v3 v3.0.5 // indirect
 
 require (
-	github.com/alecthomas/kong v1.16.1
+	github.com/alecthomas/kong v1.17.0
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24
 	github.com/rs/zerolog v1.35.1
